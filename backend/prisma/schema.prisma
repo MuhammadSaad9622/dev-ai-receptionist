@@ -1,0 +1,516 @@
+// AI Receptionist for HVAC & Plumbing — core data model
+// Multi-tenant by design (every business-data row carries orgId), even though
+// v1 deploys one isolated Postgres instance per client (see ARCHITECTURE.md,
+// "Deployment model"). This keeps a future shared-infra migration a config
+// change, not a schema migration.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Tenancy & identity
+// ─────────────────────────────────────────────────────────────────────────
+
+enum BusinessType {
+  HVAC
+  PLUMBING
+  HVAC_AND_PLUMBING
+}
+
+model Organization {
+  id           String       @id @default(cuid())
+  name         String
+  businessType BusinessType
+  timezone     String       @default("America/New_York")
+
+  // Telephony
+  twilioPhoneNumber String? // E.164, the client's public number
+  twilioNumberSid   String?
+
+  // Voice provider selection — keeps the voice layer swappable per PRD §2.
+  voiceProvider VoiceProvider @default(RETELL)
+
+  // CRM/calendar integration (nullable until the client's CRM is validated
+  // and connected — see ARCHITECTURE.md "CRM risk").
+  crmIntegration CrmIntegration?
+
+  users             User[]
+  customers         Customer[]
+  interactions      Interaction[]
+  quotes            Quote[]
+  appointments      Appointment[]
+  followUpSequences FollowUpSequence[]
+  emergencyAlerts   EmergencyAlert[]
+  consentRecords    ConsentRecord[]
+  auditLogs         AuditLog[]
+  settings          OrganizationSettings?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// Org-level tunables that drive triage/follow-up behavior without a deploy.
+model OrganizationSettings {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String       @unique
+
+  // Emergency escalation
+  emergencyAckTimeoutSeconds Int  @default(180) // §7: cannot wait on dashboard being open
+  emergencyEscalationChain   Json // ordered list of { userId, channel } tried in sequence
+
+  // Quote follow-up cadence (days after quote created), per PRD Feature 3
+  quoteFollowUpOffsetsDays Int[] @default([2, 5, 10])
+  quoteExpiresAfterDays    Int   @default(14)
+
+  // Retention/rebooking cadence (months since last completed appointment)
+  retentionCadenceMonths Int @default(6)
+
+  // Call recording disclosure text, read at the top of every voice call.
+  recordingDisclosureScript String @default("This call may be recorded for quality and scheduling purposes.")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum UserRole {
+  OWNER
+  ADMIN
+  TECHNICIAN
+}
+
+model User {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  email String
+  name  String
+  phone String? // for SMS/voice emergency fallback
+  role  UserRole @default(TECHNICIAN)
+
+  // Supabase Auth user id (source of truth for credentials lives in Supabase Auth,
+  // not here — this row is the app-side profile + org membership + role).
+  authUserId String @unique
+
+  pushSubscriptions PushSubscription[]
+  onDuty            Boolean            @default(true) // included in emergency escalation chain
+
+  ackedAlerts    EmergencyAlert[] @relation("AckedBy")
+  escalatedCalls Interaction[]    @relation("EscalatedTo")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, email])
+  @@index([organizationId])
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  fcmToken  String   @unique
+  createdAt DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Customers
+// ─────────────────────────────────────────────────────────────────────────
+
+model Customer {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  name    String?
+  phone   String // E.164 — primary match key for inbound calls/texts
+  email   String?
+  address String?
+  notes   String?
+
+  interactions      Interaction[]
+  quotes            Quote[]
+  appointments      Appointment[]
+  followUpSequences FollowUpSequence[]
+  consentRecords    ConsentRecord[]
+
+  lastInteractionAt  DateTime?
+  lastJobCompletedAt DateTime? // drives retention cadence
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, phone])
+  @@index([organizationId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Interactions (calls + SMS) & shared triage result
+// ─────────────────────────────────────────────────────────────────────────
+
+enum Channel {
+  VOICE
+  SMS
+}
+
+enum Direction {
+  INBOUND
+  OUTBOUND
+}
+
+enum VoiceProvider {
+  RETELL
+  VAPI
+  GEMINI_LIVE
+}
+
+// The single taxonomy shared by the voice agent's function-calling tools and
+// the SMS text-triage pipeline (PRD Feature 1: "identical triage rules").
+// Colors reference the System Flow diagram's color key.
+enum TriageCategory {
+  EMERGENCY // red
+  ROUTINE_SCHEDULING // green
+  QUOTE_FOLLOW_UP // amber
+  OUT_OF_SCOPE // gray — cold/not-a-fit lead
+  RETENTION // purple — system-initiated, not a live inbound triage result
+  UNCLASSIFIED
+}
+
+enum InteractionStatus {
+  IN_PROGRESS
+  COMPLETED
+  ESCALATED
+  FAILED
+}
+
+model Interaction {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  customer   Customer? @relation(fields: [customerId], references: [id])
+  customerId String?
+
+  channel   Channel
+  direction Direction
+
+  // Provider that actually handled this interaction (voice provider, or
+  // TWILIO for raw SMS).
+  provider       String // "RETELL" | "VAPI" | "GEMINI_LIVE" | "TWILIO_SMS"
+  providerCallId String? @unique // Retell/Vapi call id, or Gemini Live session id
+
+  fromNumber String
+  toNumber   String
+
+  startedAt       DateTime  @default(now())
+  endedAt         DateTime?
+  durationSeconds Int?
+
+  transcript   String? @db.Text
+  recordingUrl String? // Twilio recording URL (mirrored to S3/Supabase Storage)
+
+  // Consent, per PRD §10 — recorded per call, not just prompted in the script.
+  recordingConsentGiven Boolean? // null until the disclosure/consent step runs
+
+  triageCategory   TriageCategory @default(UNCLASSIFIED)
+  triageConfidence Float?
+  triageReasoning  String?        @db.Text
+  triageEntities   Json? // extracted structured data: issue type, urgency signals, address, etc.
+
+  status InteractionStatus @default(IN_PROGRESS)
+
+  escalatedTo   User?   @relation("EscalatedTo", fields: [escalatedToId], references: [id])
+  escalatedToId String?
+
+  emergencyAlert EmergencyAlert?
+  quote          Quote?
+  appointment    Appointment?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, triageCategory])
+  @@index([customerId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Quotes & follow-up sequences (Feature 3)
+// ─────────────────────────────────────────────────────────────────────────
+
+enum QuoteStatus {
+  OPEN
+  FOLLOWING_UP
+  WON
+  LOST
+  EXPIRED
+}
+
+model Quote {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  customer   Customer @relation(fields: [customerId], references: [id])
+  customerId String
+
+  interaction   Interaction? @relation(fields: [interactionId], references: [id])
+  interactionId String?      @unique
+
+  description String
+  amountCents Int?
+  status      QuoteStatus @default(OPEN)
+  expiresAt   DateTime?
+
+  followUpSequence FollowUpSequence?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, status])
+}
+
+enum FollowUpType {
+  QUOTE_FOLLOW_UP
+  RETENTION
+}
+
+enum FollowUpStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+model FollowUpSequence {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  type FollowUpType
+
+  customer   Customer @relation(fields: [customerId], references: [id])
+  customerId String
+
+  quote   Quote?  @relation(fields: [quoteId], references: [id])
+  quoteId String? @unique
+
+  status     FollowUpStatus @default(ACTIVE)
+  startedAt  DateTime       @default(now())
+  nextStepAt DateTime?
+
+  steps FollowUpStep[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, status])
+}
+
+enum FollowUpStepStatus {
+  PENDING
+  SENT
+  SKIPPED_OPTED_OUT
+  FAILED
+}
+
+model FollowUpStep {
+  id         String           @id @default(cuid())
+  sequence   FollowUpSequence @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  sequenceId String
+
+  stepNumber   Int // 1, 2, 3 ... maps to offsets in OrganizationSettings
+  scheduledFor DateTime
+  sentAt       DateTime?
+  channel      Channel            @default(SMS)
+  status       FollowUpStepStatus @default(PENDING)
+  messageBody  String?
+
+  // BullMQ delayed job id for this specific step, so cancelling the
+  // sequence (customer booked, replied, or opted out) can remove exactly
+  // the still-pending jobs without touching steps already sent.
+  scheduledJobId String?
+
+  createdAt DateTime @default(now())
+
+  @@index([sequenceId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Appointments (calendar/CRM-backed)
+// ─────────────────────────────────────────────────────────────────────────
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+model Appointment {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  customer   Customer @relation(fields: [customerId], references: [id])
+  customerId String
+
+  interaction   Interaction? @relation(fields: [interactionId], references: [id])
+  interactionId String?      @unique
+
+  // Foreign id in the client's CRM/calendar (ServiceTitan job id, Google
+  // Calendar event id, etc.) — the CRM is the source of truth for schedule
+  // state; this row is a local cache for dashboard/follow-up logic.
+  crmProvider   String? // "SERVICETITAN" | "HOUSECALL_PRO" | "JOBBER" | "GOOGLE_CALENDAR"
+  crmExternalId String?
+
+  jobType        String? // e.g. "AC repair", "drain cleaning"
+  technicianName String?
+  scheduledStart DateTime
+  scheduledEnd   DateTime
+  status         AppointmentStatus @default(SCHEDULED)
+  notes          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, scheduledStart])
+  @@index([crmProvider, crmExternalId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Emergency alerts (real-time owner escalation, PRD §7)
+// ─────────────────────────────────────────────────────────────────────────
+
+enum EmergencyAlertStatus {
+  PENDING
+  ACKED
+  ESCALATED
+  RESOLVED
+}
+
+model EmergencyAlert {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  interaction   Interaction @relation(fields: [interactionId], references: [id])
+  interactionId String      @unique
+
+  status EmergencyAlertStatus @default(PENDING)
+
+  // Ordered attempts: push -> SMS -> outbound voice call, per user in the
+  // escalation chain, until someone acks or the chain is exhausted.
+  notificationAttempts Json[] @default([])
+
+  // BullMQ delayed job id for the pending "did anyone ack yet?" check —
+  // cancelled the moment ackAlert() runs so a late owner tap doesn't
+  // trigger a redundant escalation call.
+  scheduledEscalationJobId String?
+
+  ackedBy    User?     @relation("AckedBy", fields: [ackedById], references: [id])
+  ackedById  String?
+  ackedAt    DateTime?
+  resolvedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Consent (call recording + SMS opt-in/out), PRD §10
+// ─────────────────────────────────────────────────────────────────────────
+
+enum ConsentType {
+  CALL_RECORDING
+  SMS_MARKETING
+}
+
+enum ConsentStatus {
+  GRANTED
+  DENIED
+  OPTED_OUT // explicit STOP — must block ALL future outbound SMS, enforced in code
+}
+
+model ConsentRecord {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  customer   Customer @relation(fields: [customerId], references: [id])
+  customerId String
+
+  type   ConsentType
+  status ConsentStatus
+  source String // "voice_disclosure" | "sms_stop_keyword" | "dashboard_manual"
+
+  recordedAt DateTime @default(now())
+
+  @@index([organizationId, customerId, type])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// CRM/calendar integration config (per PRD §10, highest-risk dependency)
+// ─────────────────────────────────────────────────────────────────────────
+
+enum CrmProvider {
+  SERVICETITAN
+  HOUSECALL_PRO
+  JOBBER
+  GOOGLE_CALENDAR
+}
+
+enum CrmIntegrationStatus {
+  ACTIVE
+  ERROR
+  DISCONNECTED
+}
+
+model CrmIntegration {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String       @unique
+
+  provider CrmProvider
+
+  // Encrypted at the application layer before storage (see
+  // src/common/crypto). Never store raw secrets in plaintext.
+  encryptedCredentials String
+
+  status     CrmIntegrationStatus @default(ACTIVE)
+  lastSyncAt DateTime?
+  lastError  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Audit log — who/what touched booking, quotes, consent state
+// ─────────────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String
+
+  actorUserId String? // null for system/automated actions
+  action      String // e.g. "quote.followup.sent", "appointment.booked"
+  entityType  String
+  entityId    String
+  metadata    Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, entityType, entityId])
+}
