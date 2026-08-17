@@ -1,4 +1,5 @@
-# AI Receptionist for HVAC & Plumbing — Backend Architecture
+# AI Receptionist for HVAC 
+ — Backend Architecture
 
 Source requirement: [`AI_Receptionist_HVAC_Technical_Architecture_and_Costing`](https://docs.google.com/document/d/1_x0Kpej6h3hSC7eMmAIjTr7HSyd9WoFWDPZ7JhLDKGs/edit) (the tech/cost addendum to the product PRD — Features 1–5 and PRD §7–10 referenced below live in that separate PRD, not reproduced here; this doc works from what the addendum exposes about them).
 
@@ -133,15 +134,23 @@ TCPA/opt-out (PRD §10) is enforced in `MessagingService.sendSms()` itself for e
 
 `VoiceProviderAdapter` normalizes Retell/Vapi webhook events into one shape (`VoiceFunctionCallEvent`, `VoiceCallEndedEvent`). `GeminiLiveProvider` intentionally does *not* fit that webhook shape — Gemini Live is a persistent WebSocket session, not request/response — so it's scaffolded as a documented stub explaining that the real Option A implementation needs a separate Twilio Media Streams gateway calling `TriageService` in-process. That gateway is out of scope for this pass; everything else (triage, booking, follow-up, dashboard) doesn't change when it's built.
 
-## 9. What's real vs. stubbed right now
+## 9. Dashboard (`dashboard/`)
 
-See [`backend/README.md`](backend/README.md#whats-stubbed-vs-real).
+Next.js 16 App Router, Supabase Auth (magic link), shadcn/ui. Every dashboard page reads/writes through the backend's JWT-guarded REST API — no direct DB access from the frontend, so the backend stays the single place tenant-scoping and role checks are enforced (see `src/auth/current-user.decorator.ts`'s comment on why).
 
-## 10. Not yet built (next steps)
+The emergency-alert requirement ("can't wait on the owner opening the dashboard") gets two independent surfaces client-side: a sticky banner on every page (`components/emergency-banner.tsx`) and a live count badge in the nav (`components/alert-count-badge.tsx`), both polling `/alerts` every 10–15s. True push (service worker, background tab) is intentionally not wired yet — see §11.
 
-- Owner dashboard (Next.js) — separate package, consumes the JWT-guarded REST API under `/api/*`.
+Full breakdown: [`dashboard/README.md`](dashboard/README.md).
+
+## 10. What's real vs. stubbed right now
+
+Backend: [`backend/README.md`](backend/README.md#whats-stubbed-vs-real). Dashboard: [`dashboard/README.md`](dashboard/README.md#whats-real-vs-stubbed).
+
+## 11. Not yet built (next steps)
+
+- **Retell AI integration** — deliberately last per the current build sequencing (HVAC flow proven end-to-end first). `backend/src/voice/providers/retell.provider.ts` has real webhook parsing/signature verification; `syncAgentConfig()` (pushing the triage prompt + tools to a live Retell agent) is still a stub waiting on a Retell account + agent id.
 - Gemini Live + Twilio Media Streams bridge (Option A).
-- Real CRM adapter HTTP calls (pending per-client API/partner access).
-- Firebase Admin wiring for push (`NotificationsService`).
+- Real CRM adapter HTTP calls (pending per-client API/partner access) — Housecall Pro first (API-key auth, no partner gate).
+- Firebase project + service worker for true background push (`NotificationsService` backend-side, `push-permission.tsx` frontend-side are both waiting on it).
 - Audit logging writes (the `AuditLog` table exists in the schema; nothing writes to it yet).
 - Photo/video intake (explicitly out of scope for v1 per the source doc).

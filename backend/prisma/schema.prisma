@@ -26,7 +26,9 @@ enum BusinessType {
 model Organization {
   id           String       @id @default(cuid())
   name         String
-  businessType BusinessType
+  // Build priority is HVAC first (plumbing support stays in the enum for
+  // later, not stripped) — see ARCHITECTURE.md.
+  businessType BusinessType @default(HVAC)
   timezone     String       @default("America/New_York")
 
   // Telephony
