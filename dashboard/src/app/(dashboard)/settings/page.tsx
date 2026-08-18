@@ -31,10 +31,6 @@ export default async function SettingsPage() {
             <span>{org.twilioPhoneNumber ?? "Not provisioned"}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-muted-foreground">Voice provider</span>
-            <Badge variant="outline">{org.voiceProvider}</Badge>
-          </div>
-          <div className="flex justify-between">
             <span className="text-muted-foreground">CRM integration</span>
             {org.crmIntegration ? (
               <Badge variant="outline">

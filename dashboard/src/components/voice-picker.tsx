@@ -7,13 +7,15 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { apiClient, ApiError } from "@/lib/api-client";
+import { apiClient } from "@/lib/api-client";
 import type { VoiceOption } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-// Voices come from the live provider API (Retell's /list-voices, proxied
-// through our backend) — we don't ship a hardcoded list, so this always
-// reflects whatever's actually available to pick from.
+// Voices come from the live voice-AI provider's API, proxied through our
+// backend — we don't ship a hardcoded list, so this always reflects
+// whatever's actually available to pick from. Errors here are shown as
+// generic messages, never the raw backend/provider error text — that text
+// can include vendor/internal details we don't surface in-product.
 export function VoicePicker({ selectedVoiceId }: { selectedVoiceId: string | null }) {
   const [voices, setVoices] = useState<VoiceOption[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -28,9 +30,8 @@ export function VoicePicker({ selectedVoiceId }: { selectedVoiceId: string | nul
       .then((data) => {
         if (!cancelled) setVoices(data);
       })
-      .catch((error: unknown) => {
-        if (cancelled) return;
-        setLoadError(error instanceof ApiError ? error.message : "Couldn't load voices.");
+      .catch(() => {
+        if (!cancelled) setLoadError("Couldn't load voices — try again shortly.");
       });
     return () => {
       cancelled = true;
@@ -61,9 +62,8 @@ export function VoicePicker({ selectedVoiceId }: { selectedVoiceId: string | nul
         });
         setSelected(voice.id);
         toast.success(`Voice set to ${voice.name} — live on your agent now.`);
-      } catch (error) {
-        const message = error instanceof ApiError ? error.message : "Couldn't set voice — try again.";
-        toast.error(message);
+      } catch {
+        toast.error("Couldn't set voice — try again.");
       }
     });
   }
@@ -120,9 +120,6 @@ export function VoicePicker({ selectedVoiceId }: { selectedVoiceId: string | nul
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium">{voice.name}</p>
               <div className="flex flex-wrap gap-1 pt-0.5">
-                <Badge variant="outline" className="text-[10px] text-muted-foreground">
-                  {voice.provider}
-                </Badge>
                 {voice.gender && (
                   <Badge variant="outline" className="text-[10px] text-muted-foreground">
                     {voice.gender}
