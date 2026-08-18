@@ -3,6 +3,7 @@ import { Organization, OrganizationSettings } from '@prisma/client';
 import {
   VoiceCallEndedEvent,
   VoiceFunctionCallEvent,
+  VoiceOption,
   VoiceProviderAdapter,
 } from '../voice-provider.interface';
 import { buildTriageSystemPrompt } from '../../triage/triage.prompt';
@@ -65,6 +66,12 @@ export class GeminiLiveProvider implements VoiceProviderAdapter {
 
   buildToolResponse(result: unknown): unknown {
     return result;
+  }
+
+  listVoices(): Promise<VoiceOption[]> {
+    // Gemini Live's voice options are a fixed short list configured on the
+    // session, not a fetchable catalog — nothing to list via API.
+    return Promise.resolve([]);
   }
 
   verifyWebhookSignature(): boolean {

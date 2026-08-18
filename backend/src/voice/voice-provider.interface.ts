@@ -24,6 +24,15 @@ export interface VoiceCallEndedEvent {
   recordingConsentGiven?: boolean;
 }
 
+export interface VoiceOption {
+  id: string;
+  name: string;
+  provider: string;
+  gender?: string;
+  accent?: string;
+  previewUrl?: string;
+}
+
 export interface VoiceProviderAdapter {
   readonly provider: 'RETELL' | 'VAPI' | 'GEMINI_LIVE';
 
@@ -46,6 +55,11 @@ export interface VoiceProviderAdapter {
   /** Provider-specific shape for the synchronous response to a function-call
    * webhook (what the agent says/does next). */
   buildToolResponse(result: unknown): unknown;
+
+  /** Lists selectable voices for the dashboard's org-setup voice picker
+   * (Organization.voiceId) — providers without a voice-selection concept
+   * return an empty array rather than throwing. */
+  listVoices(): Promise<VoiceOption[]>;
 
   /** Verifies the webhook signature header against the raw request body. */
   verifyWebhookSignature(

@@ -1,5 +1,12 @@
-import { Body, Controller, Get, Patch, UseGuards } from '@nestjs/common';
-import { IsArray, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { Body, Controller, Get, Patch, Post, UseGuards } from '@nestjs/common';
+import {
+  IsArray,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
@@ -13,6 +20,10 @@ class UpdateSettingsDto {
   @IsOptional() @IsInt() @Min(1) quoteExpiresAfterDays?: number;
   @IsOptional() @IsInt() @Min(1) retentionCadenceMonths?: number;
   @IsOptional() @IsString() recordingDisclosureScript?: string;
+}
+
+class SetVoiceDto {
+  @IsNotEmpty() @IsString() voiceId: string;
 }
 
 // Every route here relies on CurrentUser().organizationId to scope
@@ -35,5 +46,35 @@ export class OrganizationsController {
     @Body() dto: UpdateSettingsDto,
   ) {
     return this.organizations.updateSettings(user.organizationId, { ...dto });
+  }
+
+  // Manual trigger for initial voice-provider setup, or retrying a sync
+  // that failed (e.g. RETELL_API_KEY wasn't configured yet when settings
+  // were first saved).
+  @Post('voice/sync')
+  @Roles('OWNER', 'ADMIN')
+  async syncVoiceProvider(@CurrentUser() user: AuthenticatedUser) {
+    await this.organizations.syncVoiceProvider(user.organizationId);
+    return { ok: true };
+  }
+
+  // Feeds the dashboard's voice picker — the org owner listens to previews
+  // and chooses, we never default this server-side.
+  @Get('voice/options')
+  listVoiceOptions(@CurrentUser() user: AuthenticatedUser) {
+    return this.organizations.listVoiceOptions(user.organizationId);
+  }
+
+  @Patch('voice')
+  @Roles('OWNER', 'ADMIN')
+  async setVoice(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: SetVoiceDto,
+  ) {
+    await this.organizations.setVoiceId(user.organizationId, dto.voiceId);
+    // Voice choice only matters once it reaches the live agent — sync
+    // immediately rather than waiting for the next unrelated settings save.
+    await this.organizations.syncVoiceProvider(user.organizationId);
+    return { ok: true };
   }
 }

@@ -5,6 +5,7 @@ import { Organization, OrganizationSettings } from '@prisma/client';
 import {
   VoiceCallEndedEvent,
   VoiceFunctionCallEvent,
+  VoiceOption,
   VoiceProviderAdapter,
 } from '../voice-provider.interface';
 import { TriageToolName } from '../../triage/triage.types';
@@ -82,6 +83,14 @@ export class VapiProvider implements VoiceProviderAdapter {
 
   buildToolResponse(result: unknown): unknown {
     return { result };
+  }
+
+  listVoices(): Promise<VoiceOption[]> {
+    // Vapi supports several voice providers (11labs, playht, etc.) with
+    // their own list-voice endpoints — not implemented yet, Retell is the
+    // active provider for now. Empty list, not a throw: the dashboard
+    // treats "no voices" as "nothing to pick from," not an error state.
+    return Promise.resolve([]);
   }
 
   verifyWebhookSignature(

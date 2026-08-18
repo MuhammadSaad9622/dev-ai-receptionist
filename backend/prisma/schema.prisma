@@ -38,6 +38,19 @@ model Organization {
   // Voice provider selection — keeps the voice layer swappable per PRD §2.
   voiceProvider VoiceProvider @default(RETELL)
 
+  // Retell's resource model is per-org: each org's triage prompt/tools live
+  // on its own Retell LLM resource, referenced by its own Agent resource
+  // (not a single shared agent) — populated by RetellProvider.syncAgentConfig()
+  // on first sync, then reused (PATCH, not re-create) on every settings change.
+  retellAgentId String?
+  retellLlmId   String?
+
+  // Provider voice id (e.g. Retell's "11labs-Adrian"), chosen by the org
+  // owner from VoiceProviderAdapter.listVoices() in the dashboard's setup
+  // flow — not defaulted server-side, since which voice represents the
+  // business is their call, not ours.
+  voiceId String?
+
   // CRM/calendar integration (nullable until the client's CRM is validated
   // and connected — see ARCHITECTURE.md "CRM risk").
   crmIntegration CrmIntegration?
