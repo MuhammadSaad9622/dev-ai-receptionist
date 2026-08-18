@@ -128,6 +128,16 @@ export interface Organization {
   timezone: string;
   twilioPhoneNumber: string | null;
   voiceProvider: VoiceProvider;
+  voiceId: string | null;
   settings: OrganizationSettings | null;
   crmIntegration: { provider: string; status: string; lastSyncAt: string | null } | null;
+}
+
+export interface VoiceOption {
+  id: string;
+  name: string;
+  provider: string;
+  gender?: string;
+  accent?: string;
+  previewUrl?: string;
 }

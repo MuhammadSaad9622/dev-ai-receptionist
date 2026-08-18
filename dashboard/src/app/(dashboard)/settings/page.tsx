@@ -1,6 +1,7 @@
 import { apiServer } from "@/lib/api-server";
 import type { Organization } from "@/lib/types";
 import { OrgSettingsForm } from "@/components/org-settings-form";
+import { VoicePicker } from "@/components/voice-picker";
 import { PushPermission } from "@/components/push-permission";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -45,6 +46,19 @@ export default async function SettingsPage() {
               </Badge>
             )}
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Voice</CardTitle>
+          <CardDescription>
+            Choose the voice callers hear. Preview before picking — changes go live on your agent
+            immediately.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <VoicePicker selectedVoiceId={org.voiceId} />
         </CardContent>
       </Card>
 
