@@ -121,6 +121,8 @@ export interface OrganizationSettings {
   recordingDisclosureScript: string;
 }
 
+export type TelephonyStatus = "PENDING" | "NUMBER_CONNECTED" | "ERROR";
+
 export interface Organization {
   id: string;
   name: string;
@@ -131,6 +133,14 @@ export interface Organization {
   voiceId: string | null;
   settings: OrganizationSettings | null;
   crmIntegration: { provider: string; status: string; lastSyncAt: string | null } | null;
+  telephonyIntegration: { status: TelephonyStatus; lastSyncAt: string | null; lastError: string | null } | null;
+}
+
+export interface AvailableNumber {
+  phoneNumber: string;
+  friendlyName: string;
+  locality: string | null;
+  region: string | null;
 }
 
 export interface VoiceOption {

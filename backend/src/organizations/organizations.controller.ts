@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Patch, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import {
   IsArray,
   IsInt,
@@ -24,6 +32,15 @@ class UpdateSettingsDto {
 
 class SetVoiceDto {
   @IsNotEmpty() @IsString() voiceId: string;
+}
+
+class ConnectTwilioDto {
+  @IsNotEmpty() @IsString() accountSid: string;
+  @IsNotEmpty() @IsString() authToken: string;
+}
+
+class PurchaseNumberDto {
+  @IsNotEmpty() @IsString() phoneNumber: string;
 }
 
 // Every route here relies on CurrentUser().organizationId to scope
@@ -75,6 +92,55 @@ export class OrganizationsController {
     // Voice choice only matters once it reaches the live agent — sync
     // immediately rather than waiting for the next unrelated settings save.
     await this.organizations.syncVoiceProvider(user.organizationId);
+    return { ok: true };
+  }
+
+  // ── Telephony (Twilio) — each org connects and pays for their own ──────
+
+  @Patch('telephony')
+  @Roles('OWNER', 'ADMIN')
+  async connectTwilio(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: ConnectTwilioDto,
+  ) {
+    await this.organizations.connectTwilio(
+      user.organizationId,
+      dto.accountSid,
+      dto.authToken,
+    );
+    return { ok: true };
+  }
+
+  @Get('telephony/numbers')
+  @Roles('OWNER', 'ADMIN')
+  searchNumbers(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('areaCode') areaCode?: string,
+  ) {
+    return this.organizations.searchAvailableNumbers(
+      user.organizationId,
+      areaCode,
+    );
+  }
+
+  // Charges the org's own Twilio balance — confirm intent client-side
+  // before calling this (see dashboard's purchase confirmation dialog).
+  @Post('telephony/numbers')
+  @Roles('OWNER', 'ADMIN')
+  purchaseNumber(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: PurchaseNumberDto,
+  ) {
+    return this.organizations.purchaseNumber(
+      user.organizationId,
+      dto.phoneNumber,
+    );
+  }
+
+  @Post('telephony/connect-voice')
+  @Roles('OWNER', 'ADMIN')
+  async connectVoiceToRetell(@CurrentUser() user: AuthenticatedUser) {
+    await this.organizations.connectVoiceToRetell(user.organizationId);
     return { ok: true };
   }
 }

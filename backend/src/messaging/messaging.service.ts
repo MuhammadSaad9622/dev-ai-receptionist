@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { Twilio } from 'twilio';
+import { PrismaService } from '../prisma/prisma.service';
 import { ConsentService } from './consent.service';
+import { TelephonyCredentialsService } from './telephony-credentials.service';
 
 export interface SendSmsInput {
   organizationId: string;
@@ -17,22 +17,12 @@ export interface SendSmsInput {
 @Injectable()
 export class MessagingService {
   private readonly logger = new Logger(MessagingService.name);
-  private readonly client: Twilio;
-  private readonly messagingServiceSid: string;
 
   constructor(
-    private readonly config: ConfigService,
+    private readonly prisma: PrismaService,
+    private readonly telephony: TelephonyCredentialsService,
     private readonly consent: ConsentService,
-  ) {
-    this.client = new Twilio(
-      this.config.getOrThrow('TWILIO_ACCOUNT_SID'),
-      this.config.getOrThrow('TWILIO_AUTH_TOKEN'),
-    );
-    this.messagingServiceSid = this.config.get(
-      'TWILIO_MESSAGING_SERVICE_SID',
-      '',
-    );
-  }
+  ) {}
 
   async sendSms(
     input: SendSmsInput,
@@ -50,12 +40,24 @@ export class MessagingService {
       }
     }
 
-    const message = await this.client.messages.create({
+    const org = await this.prisma.organization.findUniqueOrThrow({
+      where: { id: input.organizationId },
+      select: { twilioPhoneNumber: true },
+    });
+    if (!org.twilioPhoneNumber) {
+      throw new Error(
+        `Organization ${input.organizationId} has no connected phone number yet`,
+      );
+    }
+
+    const { client } = await this.telephony.forOrg(input.organizationId);
+    const message = await client.messages.create({
       to: input.toNumber,
+      from: org.twilioPhoneNumber,
       body: input.body,
-      ...(this.messagingServiceSid
-        ? { messagingServiceSid: this.messagingServiceSid }
-        : { from: this.config.getOrThrow('TWILIO_PHONE_NUMBER') }),
+      // NOTE: A2P 10DLC campaign registration (required for sustained US
+      // SMS volume) happens in each org's own Twilio console, not here —
+      // out of scope for this service, which only sends via their number.
     });
 
     return { sent: true, sid: message.sid };
@@ -64,12 +66,24 @@ export class MessagingService {
   /** Outbound emergency-escalation voice call to an owner/technician who
    * hasn't acked a push/SMS alert in time (see alerts/processors). */
   async placeVoiceCall(
+    organizationId: string,
     toNumber: string,
     twimlUrl: string,
   ): Promise<{ sid: string }> {
-    const call = await this.client.calls.create({
+    const org = await this.prisma.organization.findUniqueOrThrow({
+      where: { id: organizationId },
+      select: { twilioPhoneNumber: true },
+    });
+    if (!org.twilioPhoneNumber) {
+      throw new Error(
+        `Organization ${organizationId} has no connected phone number yet`,
+      );
+    }
+
+    const { client } = await this.telephony.forOrg(organizationId);
+    const call = await client.calls.create({
       to: toNumber,
-      from: this.config.getOrThrow('TWILIO_PHONE_NUMBER'),
+      from: org.twilioPhoneNumber,
       url: twimlUrl,
     });
     return { sid: call.sid };

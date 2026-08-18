@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { VoiceProviderFactory } from '../voice/voice-provider.factory';
+import { TelephonyProvisioningService } from '../messaging/telephony-provisioning.service';
 
 @Injectable()
 export class OrganizationsService {
@@ -9,6 +10,7 @@ export class OrganizationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly voiceProviders: VoiceProviderFactory,
+    private readonly telephonyProvisioning: TelephonyProvisioningService,
   ) {}
 
   getWithSettings(organizationId: string) {
@@ -18,6 +20,10 @@ export class OrganizationsService {
         settings: true,
         crmIntegration: {
           select: { provider: true, status: true, lastSyncAt: true },
+        },
+        // encryptedCredentials deliberately excluded — status/number only.
+        telephonyIntegration: {
+          select: { status: true, lastSyncAt: true, lastError: true },
         },
       },
     });
@@ -71,5 +77,35 @@ export class OrganizationsService {
       where: { id: organizationId },
       data: { voiceId },
     });
+  }
+
+  connectTwilio(
+    organizationId: string,
+    accountSid: string,
+    authToken: string,
+  ): Promise<void> {
+    return this.telephonyProvisioning.connectAccount(
+      organizationId,
+      accountSid,
+      authToken,
+    );
+  }
+
+  searchAvailableNumbers(organizationId: string, areaCode?: string) {
+    return this.telephonyProvisioning.searchAvailableNumbers(
+      organizationId,
+      areaCode,
+    );
+  }
+
+  purchaseNumber(organizationId: string, phoneNumber: string) {
+    return this.telephonyProvisioning.purchaseNumber(
+      organizationId,
+      phoneNumber,
+    );
+  }
+
+  connectVoiceToRetell(organizationId: string): Promise<void> {
+    return this.telephonyProvisioning.connectVoiceToRetell(organizationId);
   }
 }

@@ -51,6 +51,11 @@ model Organization {
   // business is their call, not ours.
   voiceId String?
 
+  // Telephony: each org brings and pays for their own Twilio account (their
+  // own number, their own usage credits) — never our platform's credentials.
+  // See TelephonyIntegration below.
+  telephonyIntegration TelephonyIntegration?
+
   // CRM/calendar integration (nullable until the client's CRM is validated
   // and connected — see ARCHITECTURE.md "CRM risk").
   crmIntegration CrmIntegration?
@@ -488,6 +493,50 @@ enum CrmIntegrationStatus {
   ACTIVE
   ERROR
   DISCONNECTED
+}
+
+enum TelephonyProvider {
+  TWILIO
+}
+
+enum TelephonyIntegrationStatus {
+  PENDING // credentials saved, no number connected to the voice AI yet
+  NUMBER_CONNECTED // SIP trunk created + number imported into Retell
+  ERROR
+}
+
+// Per-org telephony credentials. Each client connects and pays for their
+// own Twilio account (their own number, their own per-minute/SMS credits) —
+// this is never our platform's Twilio account, unlike Retell (see
+// VoiceProviderAdapter, which stays platform-level). Mirrors CrmIntegration's
+// encrypted-credential pattern.
+model TelephonyIntegration {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationId String       @unique
+
+  provider TelephonyProvider @default(TWILIO)
+
+  // Encrypted { accountSid, authToken } — see src/common/crypto. Never
+  // stored in plaintext.
+  encryptedCredentials String
+
+  // Elastic SIP Trunk resources bridging this org's Twilio number to
+  // Retell (see ARCHITECTURE.md "Twilio <-> Retell connection" and
+  // https://docs.retellai.com/deploy/twilio). Kept so re-running the
+  // connect flow updates the existing trunk instead of creating a
+  // duplicate every time.
+  twilioTrunkSid          String?
+  twilioCredentialListSid String?
+  sipTerminationUri       String?
+  retellImportedAt        DateTime?
+
+  status     TelephonyIntegrationStatus @default(PENDING)
+  lastSyncAt DateTime?
+  lastError  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model CrmIntegration {

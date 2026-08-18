@@ -1,6 +1,7 @@
 import { apiServer } from "@/lib/api-server";
 import type { Organization } from "@/lib/types";
 import { OrgSettingsForm } from "@/components/org-settings-form";
+import { PhoneNumberSetup } from "@/components/phone-number-setup";
 import { VoicePicker } from "@/components/voice-picker";
 import { PushPermission } from "@/components/push-permission";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,10 +28,6 @@ export default async function SettingsPage() {
             <span>{org.businessType.replace(/_/g, " & ")}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-muted-foreground">Phone number</span>
-            <span>{org.twilioPhoneNumber ?? "Not provisioned"}</span>
-          </div>
-          <div className="flex justify-between">
             <span className="text-muted-foreground">CRM integration</span>
             {org.crmIntegration ? (
               <Badge variant="outline">
@@ -42,6 +39,21 @@ export default async function SettingsPage() {
               </Badge>
             )}
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Phone Number</CardTitle>
+          <CardDescription>
+            Your own business phone number for calls and texts — you connect and pay for it.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <PhoneNumberSetup
+            twilioPhoneNumber={org.twilioPhoneNumber}
+            telephonyIntegration={org.telephonyIntegration}
+          />
         </CardContent>
       </Card>
 

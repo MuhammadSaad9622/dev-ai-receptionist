@@ -106,6 +106,7 @@ export class AlertsService {
     }
     if (entry.channels.includes('VOICE') && user.phone) {
       await this.messaging.placeVoiceCall(
+        organizationId,
         user.phone,
         `${process.env.APP_URL}/twiml/emergency-alert`,
       );

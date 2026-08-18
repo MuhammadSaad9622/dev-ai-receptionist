@@ -12,6 +12,7 @@ import { validateRequest } from 'twilio';
 import { PrismaService } from '../prisma/prisma.service';
 import { TriageService } from '../triage/triage.service';
 import { ConsentService } from '../messaging/consent.service';
+import { TelephonyCredentialsService } from '../messaging/telephony-credentials.service';
 
 interface TwilioInboundSmsBody {
   From: string;
@@ -35,6 +36,7 @@ export class TwilioSmsWebhookController {
     private readonly prisma: PrismaService,
     private readonly triage: TriageService,
     private readonly consent: ConsentService,
+    private readonly telephony: TelephonyCredentialsService,
   ) {}
 
   @Post('twilio')
@@ -43,18 +45,25 @@ export class TwilioSmsWebhookController {
     @Headers('x-twilio-signature') signature: string,
     @Res() res: Response,
   ) {
-    const authToken = this.config.getOrThrow<string>('TWILIO_AUTH_TOKEN');
-    const url = `${this.config.getOrThrow('APP_URL')}/webhooks/sms/twilio`;
-    const valid = validateRequest(authToken, signature, url, body);
-    if (!valid) throw new BadRequestException('Invalid Twilio signature');
-
+    // Org is per-Twilio-account (each client brings their own), so which
+    // auth token verifies this request depends on which org's number it
+    // was sent to — that has to be resolved BEFORE signature verification,
+    // not after. `To` is public request data, safe to use for routing
+    // ahead of auth; the actual signature check still gates everything
+    // that follows.
     const org = await this.prisma.organization.findFirst({
       where: { twilioPhoneNumber: body.To },
     });
-    if (!org)
+    if (!org) {
       throw new BadRequestException(
         `No organization found for number ${body.To}`,
       );
+    }
+
+    const { authToken } = await this.telephony.forOrg(org.id);
+    const url = `${this.config.getOrThrow('APP_URL')}/webhooks/sms/twilio`;
+    const valid = validateRequest(authToken, signature, url, body);
+    if (!valid) throw new BadRequestException('Invalid Twilio signature');
 
     // TCPA/carrier STOP handling — enforced here regardless of what the
     // triage model would have said, per PRD §10.

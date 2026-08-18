@@ -7,8 +7,6 @@ build/
 .next/
 
 # Env
-.env
-.env.local
 .env.*.local
 
 # Logs
@@ -20,7 +18,6 @@ pnpm-debug.log*
 .DS_Store
 
 # IDE
-.vscode/*
 !.vscode/extensions.json
 .idea/
 
@@ -29,3 +26,4 @@ coverage/
 
 # Prisma
 backend/prisma/*.db
+config.bat
